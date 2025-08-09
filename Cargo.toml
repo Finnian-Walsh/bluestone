@@ -1,5 +1,5 @@
 [package]
-name = "Bluestone"
+name = "bluestone"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,3 +7,4 @@ edition = "2024"
 serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 dotenvy = "0.15"
+once_cell = "1.21.3"
