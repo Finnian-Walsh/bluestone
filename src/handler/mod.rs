@@ -1,16 +1,19 @@
 mod user_info;
+mod server;
 
 use serenity::{
     async_trait,
     model::{channel::Message, gateway::Ready, id::ChannelId},
     prelude::*,
 };
+use server::prelude::*;
 use std::sync::OnceLock;
 use user_info::get_user_info;
 
 pub struct Handler {
     bot_mention: OnceLock<String>,
     bot_lower_username: OnceLock<String>,
+    server_manager: ServerManager,
 }
 
 impl Handler {
@@ -18,6 +21,7 @@ impl Handler {
         Self {
             bot_lower_username: OnceLock::new(),
             bot_mention: OnceLock::new(),
+            server_manager: ServerManager::new(),
         }
     }
 
@@ -71,6 +75,8 @@ impl EventHandler for Handler {
             return;
         }
 
+        println!("Mentioned by {}", msg.author.name);
+
         let Some(command_word) = split_whitespace.next() else {
             self.say(&ctx, &msg.channel_id, "yo").await;
             return;
@@ -111,6 +117,19 @@ impl EventHandler for Handler {
                         self.say(&ctx, &msg.channel_id, &user_info).await;
                     },
                     _ => self.say(&ctx, &msg.channel_id, "unrecognised verb").await,
+                }
+            },
+            "please" => {
+                self.server_manager.user_execute(&msg.author, ExecutionAlias::Please, split_whitespace);
+            },
+            "execute" => {
+                println!("execute");
+                if let Err(e) = self.server_manager.user_execute(&msg.author, ExecutionAlias::Execute, split_whitespace) {
+                    println!("err");
+                    self.say(&ctx, &msg.channel_id, &format!("err: {}", e));
+                } else {
+                    println!("success");
+                    self.say(&ctx, &msg.channel_id, "success");
                 }
             },
             _ => self.say(&ctx, &msg.channel_id, "idk").await,
