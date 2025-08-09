@@ -1,14 +1,17 @@
-mod crate::prelude;
+pub mod prelude;
+mod authoritative_users;
 
-use std::{env, fs::OpenOptions, io::Write, path::Path};
+use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias, ExecutionError};
+use serenity::model::prelude::*;
+use std::{env, fs::OpenOptions, io::Write, path::{Path, PathBuf}, str::SplitWhitespace};
 
-struct ServerManager {
-    servers_dir: String,
+pub struct ServerManager {
+    servers_dir: PathBuf,
     servers: Vec<String>,
 }
 
-fn retain_servers(vec: &Vec<String>) {
-    vec.retain(|&s| {
+fn retain_servers(servers_dir: &PathBuf, vec: &mut Vec<String>) {
+    vec.retain(|s| {
         let path = servers_dir.join(s);
         path.exists() && path.is_dir()
     });
@@ -16,11 +19,12 @@ fn retain_servers(vec: &Vec<String>) {
 
 impl ServerManager {
     pub fn new() -> Self {
-        let args: Vec<String> = env::args().collect();
+        let mut args: Vec<String> = env::args().collect();
         let servers_dir = Path::new(&env::var_os("HOME").expect("Failed to get HOME variable"))
-            .join("Servers");
+            .join("Servers")
+            .to_path_buf();
 
-        retain_servers(&args);
+        retain_servers(&servers_dir, &mut args);
 
         ServerManager {
             servers_dir: servers_dir,
@@ -28,47 +32,46 @@ impl ServerManager {
         }
     }
 
-    pub fn set_servers(&mut self, servers: Vec<String>) {
-        retain_servers(servers);
+    fn set_servers(&mut self, mut servers: Vec<String>) {
+        retain_servers(&self.servers_dir, &mut servers);
         self.servers = servers;
     }
 
-    pub fn execute(&self, command: &str) {
+    fn execute(&self, command: &str) -> authoritative_users::Result<()> {
         let mut errors = vec![];
 
-        for server in self.servers {
-            let path = format!("/tmp/{}", server)
-            if let Err(e) = OpenOptions::new()
-                .write(true)
-                .open(path)
-                .and_then(|mut fifo| fifo.write_all(command)) {
+        for server in &self.servers {
+            let path = format!("/tmp/{}", server);
+            if let Err(e) = OpenOptions::new().write(true).open(&path).and_then(|mut fifo| fifo.write_all(format!("{}\n", command).as_bytes())) {
                 errors.push((path, e));
             }
         }
 
-        errors
-    }
-
-    pub fn whitelist_add(&self, player: &str) -> std::io::Result<()> {
-        for server in self.servers {
-            let mut pipe = OpenOptions::new()
-                .write(true)
-                .open(format!("/tmp/{}", server))?;
-
-            fifo.write_all(format!("whitelist add {}", name.as_bytes()))?;
+        if errors.len() > 0 {
+            return Err(ExecutionError::Io(errors));
         }
 
         Ok(())
     }
 
-    pub fn whitelist_remove(&self, player: &str) -> std::io::Result<()> {
-        for server in self.servers {        
-            let mut pipe = OpenOptions::new()
-                .write(true)
-                .open(format!("/tmp/{}", server))?;
+    fn whitelist_add(&self, player: &str) -> authoritative_users::Result<()> {
+        self.execute(&format!("whitelist add {}, ", player))
+    }
 
-            fifo.write_all(format!("whitelist remove {}", name.as_bytes()))?;
+    fn whitelist_remove(&self, player: &str) -> authoritative_users::Result<()> {
+        self.execute(&format!("whitelist remove {}", player))
+    }
+
+    pub fn user_execute(&self, user: &User, alias: ExecutionAlias, command: SplitWhitespace) -> authoritative_users::Result<()> {
+        let Some(authority) = AUTHORITATIVE_USERS.get(&user.id) else {
+            return Err(ExecutionError::InadequateAuthority);
+        };
+
+        if *authority < alias {
+            return Err(ExecutionError::InadequateAuthority);
         }
+
+        self.execute(&command.collect::<Vec<&str>>().join(" "))
     }
 }
 
