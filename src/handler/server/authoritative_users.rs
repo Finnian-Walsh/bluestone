@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use serenity::model::id::UserId;
-use std::{collections::HashMap, fmt, io, result};
+use std::collections::HashMap;
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, PartialOrd)]

@@ -5,7 +5,6 @@ use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias};
 use serenity::model::prelude::*;
 use std::{
     env, fmt,
-    fs::OpenOptions,
     io,
     path::{Path, PathBuf},
     process::Command,

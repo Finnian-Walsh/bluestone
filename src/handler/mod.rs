@@ -3,7 +3,7 @@ mod who;
 
 use serenity::{
     async_trait,
-    model::{channel::Message, gateway::Ready, id::ChannelId},
+    model::{channel::Message, gateway::Ready},
     prelude::*,
 };
 use server::prelude::*;
