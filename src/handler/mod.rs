@@ -1,5 +1,4 @@
 mod server;
-mod user_info;
 mod who;
 
 use serenity::{
