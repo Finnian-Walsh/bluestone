@@ -1,14 +1,77 @@
-pub mod prelude;
 mod authoritative_users;
+pub mod prelude;
 
-use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias, ExecutionError};
+use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias};
 use serenity::model::prelude::*;
-use std::{env, fs::OpenOptions, io::Write, path::{Path, PathBuf}, str::SplitWhitespace};
+use std::{
+    env, fmt,
+    fs::OpenOptions,
+    io,
+    path::{Path, PathBuf},
+    process::Command,
+    result,
+    str::SplitWhitespace,
+};
 
 pub struct ServerManager {
     servers_dir: PathBuf,
     servers: Vec<String>,
 }
+
+#[derive(Debug)]
+pub enum CommandExecutionError {
+    NotExecuted(io::Error),
+    Failure {
+        code: String,
+        command: String,
+        stderr: Vec<u8>,
+    },
+}
+
+impl fmt::Display for CommandExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CommandExecutionError::NotExecuted(err) => write!(f, "{}", err),
+            CommandExecutionError::Failure {
+                code,
+                command,
+                stderr,
+            } => write!(
+                f,
+                "Failed to execute command '{}' (error code {}): {}",
+                command,
+                code,
+                String::from_utf8_lossy(stderr)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CommandExecutionError {}
+
+#[derive(Debug)]
+pub enum Error {
+    CommandExecution(Vec<CommandExecutionError>),
+    InadequateAuthority,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::CommandExecution(errors) => {
+                for err in errors {
+                    write!(f, "{}", err)?;
+                }
+                Ok(())
+            }
+            Error::InadequateAuthority => write!(f, "inadequate authority"),
+        }
+    }
+}
+
+pub type Result<T> = result::Result<T, Error>;
+
+impl std::error::Error for Error {}
 
 fn retain_servers(servers_dir: &PathBuf, vec: &mut Vec<String>) {
     vec.retain(|s| {
@@ -37,42 +100,61 @@ impl ServerManager {
         self.servers = servers;
     }
 
-    fn execute(&self, command: &str) -> authoritative_users::Result<()> {
+    fn execute(&self, command: &str) -> Result<()> {
         let mut errors = vec![];
 
         for server in &self.servers {
-            let path = format!("/tmp/{}", server);
-            if let Err(e) = OpenOptions::new().write(true).open(&path).and_then(|mut fifo| fifo.write_all(format!("{}\n", command).as_bytes())) {
-                errors.push((path, e));
+            match Command::new("tmux")
+                .arg("send-keys")
+                .arg(command)
+                .arg("Enter")
+                .output()
+            {
+                Ok(output) => {
+                    if !output.status.success() {
+                        errors.push(CommandExecutionError::Failure {
+                            code: match output.status.code() {
+                                Some(code) => code.to_string(),
+                                None => "none".to_string(),
+                            },
+                            command: command.to_string(),
+                            stderr: output.stderr,
+                        });
+                    }
+                }
+                Err(err) => errors.push(CommandExecutionError::NotExecuted(err)),
             }
         }
 
         if errors.len() > 0 {
-            return Err(ExecutionError::Io(errors));
+            return Err(Error::CommandExecution(errors));
         }
 
         Ok(())
     }
 
-    fn whitelist_add(&self, player: &str) -> authoritative_users::Result<()> {
+    fn whitelist_add(&self, player: &str) -> Result<()> {
         self.execute(&format!("whitelist add {}, ", player))
     }
 
-    fn whitelist_remove(&self, player: &str) -> authoritative_users::Result<()> {
+    fn whitelist_remove(&self, player: &str) -> Result<()> {
         self.execute(&format!("whitelist remove {}", player))
     }
 
-    pub fn user_execute(&self, user: &User, alias: ExecutionAlias, command: SplitWhitespace) -> authoritative_users::Result<()> {
+    pub fn user_execute(
+        &self,
+        user: &User,
+        alias: ExecutionAlias,
+        command: SplitWhitespace,
+    ) -> Result<()> {
         let Some(authority) = AUTHORITATIVE_USERS.get(&user.id) else {
-            return Err(ExecutionError::InadequateAuthority);
+            return Err(Error::InadequateAuthority);
         };
 
         if *authority < alias {
-            return Err(ExecutionError::InadequateAuthority);
+            return Err(Error::InadequateAuthority);
         }
 
         self.execute(&command.collect::<Vec<&str>>().join(" "))
     }
 }
-
-
