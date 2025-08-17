@@ -1,5 +1,6 @@
-mod user_info;
 mod server;
+mod user_info;
+mod who;
 
 use serenity::{
     async_trait,
@@ -7,8 +8,7 @@ use serenity::{
     prelude::*,
 };
 use server::prelude::*;
-use std::sync::OnceLock;
-use user_info::get_user_info;
+use std::{str::SplitWhitespace, sync::OnceLock};
 
 pub struct Handler {
     bot_mention: OnceLock<String>,
@@ -26,8 +26,14 @@ impl Handler {
     }
 
     fn set_bot_data(&self, ready: &Ready) {
-        self.bot_mention.set(ready.user.mention().to_string()).ok().unwrap();
-        self.bot_lower_username.set(ready.user.name.to_lowercase()).ok().unwrap();
+        self.bot_mention
+            .set(ready.user.mention().to_string())
+            .ok()
+            .unwrap();
+        self.bot_lower_username
+            .set(ready.user.name.to_lowercase())
+            .ok()
+            .unwrap();
     }
 
     fn get_bot_lower_username(&self) -> &str {
@@ -38,12 +44,42 @@ impl Handler {
         self.bot_mention.get().unwrap()
     }
 
-    async fn say(&self, ctx: &Context, channel_id: &ChannelId, message: &str) {
-        if let Err(why) = channel_id.say(&ctx.http, message).await {
-            println!("Error sending message {message}: {:?}", why);
-        } else {
-            println!("Sent message {}", message)
-        }
+    async fn handle_command(
+        &self,
+        mut command: SplitWhitespace<'_>,
+        ctx: Context,
+        msg: &Message,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let channel_id = msg.channel_id;
+        let http = &ctx.http;
+
+        let Some(command_word) = command.next() else {
+            channel_id.say(http, "yo").await?;
+            return Ok(());
+        };
+
+        match command_word {
+            "hello" => {
+                channel_id.say(http, "👋 hello!").await?;
+            }
+            "who" => {
+                who::who(command, ctx, msg).await?;
+            }
+            "please" => {
+                self.server_manager
+                    .user_execute(&msg.author, ExecutionAlias::Please, command)?;
+            }
+            "execute" => {
+                println!("execute");
+                self.server_manager
+                    .user_execute(&msg.author, ExecutionAlias::Execute, command)?;
+            }
+            _ => {
+                channel_id.say(http, "idk").await?;
+            }
+        };
+
+        Ok(())
     }
 }
 
@@ -53,7 +89,11 @@ impl EventHandler for Handler {
         println!("{} is connected", ready.user.name);
         self.set_bot_data(&ready);
 
-        println!("{} and {}", self.get_bot_mention(), self.get_bot_lower_username());
+        println!(
+            "Bot mention: {}\nBot username: {}",
+            self.get_bot_mention(),
+            self.get_bot_lower_username()
+        );
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
@@ -61,12 +101,13 @@ impl EventHandler for Handler {
             return;
         }
 
-        let content = msg.content;
-        let mut split_whitespace = content.split_whitespace();
+        let mut split_whitespace = msg.content.split_whitespace();
 
         let has_mention = split_whitespace.next().is_some_and(|first_word| {
             let id_mentioned = first_word == self.get_bot_mention();
-            if id_mentioned { return true; }
+            if id_mentioned {
+                return true;
+            }
             let name_mentioned = first_word.to_lowercase() == self.get_bot_lower_username();
             name_mentioned
         });
@@ -77,63 +118,8 @@ impl EventHandler for Handler {
 
         println!("Mentioned by {}", msg.author.name);
 
-        let Some(command_word) = split_whitespace.next() else {
-            self.say(&ctx, &msg.channel_id, "yo").await;
-            return;
-        };
-
-        match command_word {
-            "hello" => {
-                self.say(&ctx, &msg.channel_id, "👋 hello!").await;
-            },
-            "who" => {
-                let Some(verb) = split_whitespace.next() else {
-                    self.say(&ctx, &msg.channel_id, "no verb").await;
-                    return;
-                };
-
-                match verb {
-                    "is" => {
-                        let Some(user) = split_whitespace.next() else {
-                            self.say(&ctx, &msg.channel_id, "target not specified").await;
-                            return;
-                        };
-
-                        if split_whitespace.count() > 0 {
-                            self.say(&ctx, &msg.channel_id, "too many targets; use are instead").await;
-                            return;
-                        }
-                        
-                        self.say(&ctx, &msg.channel_id, &get_user_info(user)).await;
-                    },
-                    "are" => {
-                        let mut user_info = String::new();
-
-                        for user in split_whitespace.collect::<Vec<&str>>() {
-                            user_info.push_str(&get_user_info(user));
-                            user_info.push_str("\n\n")
-                        }
-
-                        self.say(&ctx, &msg.channel_id, &user_info).await;
-                    },
-                    _ => self.say(&ctx, &msg.channel_id, "unrecognised verb").await,
-                }
-            },
-            "please" => {
-                self.server_manager.user_execute(&msg.author, ExecutionAlias::Please, split_whitespace);
-            },
-            "execute" => {
-                println!("execute");
-                if let Err(e) = self.server_manager.user_execute(&msg.author, ExecutionAlias::Execute, split_whitespace) {
-                    println!("err");
-                    self.say(&ctx, &msg.channel_id, &format!("err: {}", e));
-                } else {
-                    println!("success");
-                    self.say(&ctx, &msg.channel_id, "success");
-                }
-            },
-            _ => self.say(&ctx, &msg.channel_id, "idk").await,
+        if let Err(err) = self.handle_command(split_whitespace, ctx, &msg).await {
+            eprintln!("{:?}", err);
         }
     }
 }
-
