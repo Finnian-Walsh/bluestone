@@ -2,8 +2,8 @@ mod handler;
 
 use dotenvy::dotenv;
 use handler::Handler;
-use std::env;
 use serenity::prelude::*;
+use std::env;
 
 #[tokio::main]
 async fn main() {
