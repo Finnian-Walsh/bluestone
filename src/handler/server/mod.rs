@@ -125,7 +125,7 @@ pub fn execute(command: &str) -> Result<()> {
 }
 
 pub fn whitelist_add(_sender: &User, target_player: &str) -> Result<()> {
-    execute(&format!("whitelist add {}, ", target_player))
+    execute(&format!("whitelist add {}", target_player))
 }
 
 pub fn whitelist_remove(sender: &User, target_player: &str) -> Result<()> {
