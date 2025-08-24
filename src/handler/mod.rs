@@ -12,7 +12,6 @@ use std::{str::SplitWhitespace, sync::OnceLock};
 pub struct Handler {
     bot_mention: OnceLock<String>,
     bot_lower_username: OnceLock<String>,
-    server_manager: ServerManager,
 }
 
 impl Handler {
@@ -20,7 +19,6 @@ impl Handler {
         Self {
             bot_lower_username: OnceLock::new(),
             bot_mention: OnceLock::new(),
-            server_manager: ServerManager::new(),
         }
     }
 
@@ -43,12 +41,7 @@ impl Handler {
         self.bot_mention.get().unwrap()
     }
 
-    async fn handle_command(
-        &self,
-        mut command: SplitWhitespace<'_>,
-        ctx: Context,
-        msg: &Message,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_command(&self, mut command: SplitWhitespace<'_>, ctx: Context, msg: &Message) -> Result<(), Box<dyn std::error::Error>> {
         let channel_id = msg.channel_id;
         let http = &ctx.http;
 
@@ -64,14 +57,24 @@ impl Handler {
             "who" => {
                 who::who(command, ctx, msg).await?;
             }
+            "add" => {
+                server::whitelist_add(&msg.author, match command.next() {
+                    Some(target) => &target,
+                    None => "",
+                })?;
+            }
+            "remove" => {
+                server::whitelist_remove(&msg.author, match command.next() {
+                    Some(target) => &target,
+                    None => ""
+                })?;
+            }
             "please" => {
-                self.server_manager
-                    .user_execute(&msg.author, ExecutionAlias::Please, command)?;
+                server::execute_request(&msg.author, ExecutionAlias::Please, command)?;
             }
             "execute" => {
                 println!("execute");
-                self.server_manager
-                    .user_execute(&msg.author, ExecutionAlias::Execute, command)?;
+                server::execute_request(&msg.author, ExecutionAlias::Execute, command)?;
             }
             _ => {
                 channel_id.say(http, "idk").await?;
@@ -89,7 +92,7 @@ impl EventHandler for Handler {
         self.set_bot_data(&ready);
 
         println!(
-            "Bot mention: {}\nBot username: {}",
+            "To mention, use {}\n{} starting...",
             self.get_bot_mention(),
             self.get_bot_lower_username()
         );
@@ -118,7 +121,7 @@ impl EventHandler for Handler {
         println!("Mentioned by {}", msg.author.name);
 
         if let Err(err) = self.handle_command(split_whitespace, ctx, &msg).await {
-            eprintln!("{:?}", err);
+            eprintln!("{}", err);
         }
     }
 }
