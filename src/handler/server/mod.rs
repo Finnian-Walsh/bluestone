@@ -1,21 +1,16 @@
-mod authoritative_users;
 pub mod prelude;
+mod authoritative_users;
 
 use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias};
+use mc_server::config;
 use serenity::model::prelude::*;
 use std::{
-    env, fmt,
-    io,
-    path::{Path, PathBuf},
+    env, fmt, io,
     process::Command,
     result,
     str::SplitWhitespace,
+    sync::OnceLock
 };
-
-pub struct ServerManager {
-    servers_dir: PathBuf,
-    servers: Vec<String>,
-}
 
 #[derive(Debug)]
 pub enum CommandExecutionError {
@@ -72,88 +67,103 @@ pub type Result<T> = result::Result<T, Error>;
 
 impl std::error::Error for Error {}
 
-fn retain_servers(servers_dir: &PathBuf, vec: &mut Vec<String>) {
-    vec.retain(|s| {
-        let path = servers_dir.join(s);
-        path.exists() && path.is_dir()
-    });
+static SERVERS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn execute(command: &str) -> Result<()> {
+    let mut errors = vec![];
+
+    for server in SERVERS.get_or_init(|| {
+        let args: Vec<String> = env::args().skip(1).collect();
+
+        if args.len() == 0 {
+            match config::get_default() {
+                Ok(server) => vec![server],
+                Err(err) => {
+                    match err.kind() {
+                        io::ErrorKind::NotFound => {}
+                        _ => {
+                            eprintln!("{}", err);
+                        }
+                    };
+
+                    vec![]
+                }
+            }
+        } else {
+            args
+        }
+    }) {
+        match Command::new("tmux")
+            .arg("send-keys")
+            .arg("-t")
+            .arg(server)
+            .arg(command)
+            .arg("Enter")
+            .output()
+        {
+            Ok(output) => {
+                if !output.status.success() {
+                    errors.push(CommandExecutionError::Failure {
+                        code: match output.status.code() {
+                            Some(code) => code.to_string(),
+                            None => "none".to_string(),
+                        },
+                        command: command.to_string(),
+                        stderr: output.stderr,
+                    });
+                }
+            }
+            Err(err) => errors.push(CommandExecutionError::NotExecuted(err)),
+        }
+    }
+
+    if errors.len() > 0 {
+        return Err(Error::CommandExecution(errors));
+    }
+
+    Ok(())
 }
 
-impl ServerManager {
-    pub fn new() -> Self {
-        let mut args: Vec<String> = env::args().collect();
-        let servers_dir = Path::new(&env::var_os("HOME").expect("Failed to get HOME variable"))
-            .join("Servers")
-            .to_path_buf();
+pub fn whitelist_add(_sender: &User, target_player: &str) -> Result<()> {
+    execute(&format!("whitelist add {}, ", target_player))
+}
 
-        retain_servers(&servers_dir, &mut args);
+pub fn whitelist_remove(sender: &User, target_player: &str) -> Result<()> {
+    let authority = AUTHORITATIVE_USERS
+        .get(&sender.id)
+        .ok_or(Error::InadequateAuthority)?;
 
-        ServerManager {
-            servers_dir: servers_dir,
-            servers: args,
-        }
+    if authority < &ExecutionAlias::Please {
+        return Err(Error::InadequateAuthority);
     }
 
-    fn set_servers(&mut self, mut servers: Vec<String>) {
-        retain_servers(&self.servers_dir, &mut servers);
-        self.servers = servers;
+    execute(&format!("whitelist remove {}", target_player))?;
+    Ok(())
+}
+
+pub fn execute_request(
+    sender: &User,
+    alias: ExecutionAlias,
+    mut command: SplitWhitespace,
+) -> Result<()> {
+    let authority = AUTHORITATIVE_USERS
+        .get(&sender.id)
+        .ok_or(Error::InadequateAuthority)?;
+
+    if *authority < alias {
+        return Err(Error::InadequateAuthority);
     }
 
-    fn execute(&self, command: &str) -> Result<()> {
-        let mut errors = vec![];
+    let command_str = if let Some(view) = command.next() {
+        command.fold(view.to_string(), |mut accumulator, word| {
+            accumulator.push(' ');
+            accumulator.push_str(word);
+            accumulator
+        })
+    } else {
+        String::new()
+    };
 
-        for server in &self.servers {
-            match Command::new("tmux")
-                .arg("send-keys")
-                .arg(command)
-                .arg("Enter")
-                .output()
-            {
-                Ok(output) => {
-                    if !output.status.success() {
-                        errors.push(CommandExecutionError::Failure {
-                            code: match output.status.code() {
-                                Some(code) => code.to_string(),
-                                None => "none".to_string(),
-                            },
-                            command: command.to_string(),
-                            stderr: output.stderr,
-                        });
-                    }
-                }
-                Err(err) => errors.push(CommandExecutionError::NotExecuted(err)),
-            }
-        }
-
-        if errors.len() > 0 {
-            return Err(Error::CommandExecution(errors));
-        }
-
-        Ok(())
-    }
-
-    fn whitelist_add(&self, player: &str) -> Result<()> {
-        self.execute(&format!("whitelist add {}, ", player))
-    }
-
-    fn whitelist_remove(&self, player: &str) -> Result<()> {
-        self.execute(&format!("whitelist remove {}", player))
-    }
-
-    pub fn user_execute(
-        &self,
-        user: &User,
-        alias: ExecutionAlias,
-        command: SplitWhitespace,
-    ) -> Result<()> {
-        let Some(authority) = AUTHORITATIVE_USERS.get(&user.id) else {
-            return Err(Error::InadequateAuthority);
-        };
-
-        if *authority < alias {
-            return Err(Error::InadequateAuthority);
-        }
-
-        self.execute(&command.collect::<Vec<&str>>().join(" "))
-    }
+    execute(&command_str)?;
+    Ok(())
 }
