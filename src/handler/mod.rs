@@ -46,7 +46,7 @@ impl Handler {
         let http = &ctx.http;
 
         let Some(command_word) = command.next() else {
-            channel_id.say(http, "yo").await?;
+            channel_id.say(http, "# yo <a:ferris_moving:1408770783559553064>").await?;
             return Ok(());
         };
 
