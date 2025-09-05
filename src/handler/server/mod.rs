@@ -1,124 +1,55 @@
-pub mod prelude;
 mod authoritative_users;
+pub mod prelude;
 
+use super::error::{Error, Result};
 use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias};
-use mc_server::config;
+use mcserver::config;
 use serenity::model::prelude::*;
-use std::{
-    env, fmt, io,
-    process::Command,
-    result,
-    str::SplitWhitespace,
-    sync::OnceLock
-};
-
-#[derive(Debug)]
-pub enum CommandExecutionError {
-    NotExecuted(io::Error),
-    Failure {
-        code: String,
-        command: String,
-        stderr: Vec<u8>,
-    },
-}
-
-impl fmt::Display for CommandExecutionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CommandExecutionError::NotExecuted(err) => write!(f, "{}", err),
-            CommandExecutionError::Failure {
-                code,
-                command,
-                stderr,
-            } => write!(
-                f,
-                "Failed to execute command '{}' (error code {}): {}",
-                command,
-                code,
-                String::from_utf8_lossy(stderr)
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CommandExecutionError {}
-
-#[derive(Debug)]
-pub enum Error {
-    CommandExecution(Vec<CommandExecutionError>),
-    InadequateAuthority,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::CommandExecution(errors) => {
-                for err in errors {
-                    write!(f, "{}", err)?;
-                }
-                Ok(())
-            }
-            Error::InadequateAuthority => write!(f, "inadequate authority"),
-        }
-    }
-}
-
-pub type Result<T> = result::Result<T, Error>;
-
-impl std::error::Error for Error {}
+use std::{env, io, process::Command, str::SplitWhitespace, sync::OnceLock};
 
 static SERVERS: OnceLock<Vec<String>> = OnceLock::new();
 
-pub fn execute(command: &str) -> Result<()> {
-    let mut errors = vec![];
+pub fn get_servers() -> Result<&'static Vec<String>> {
+    if let Some(servers) = SERVERS.get() {
+        return Ok(servers);
+    }
 
-    for server in SERVERS.get_or_init(|| {
-        let args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<String> = env::args().skip(1).collect();
 
-        if args.len() == 0 {
-            match config::get()?.default_server {
-                Ok(server) => vec![server],
-                Err(err) => {
-                    match err.kind() {
-                        io::ErrorKind::NotFound => {}
-                        _ => {
-                            eprintln!("{}", err);
-                        }
-                    };
-
-                    vec![]
-                }
-            }
-        } else {
-            args
+    let servers = if args.len() == 0 {
+        let default_server = &config::get()?.default_server;
+        if default_server.is_empty() {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no servers found",
+            )));
         }
-    }) {
-        match Command::new("tmux")
+
+        vec![default_server.to_string()]
+    } else {
+        args
+    };
+
+    Ok(SERVERS.get_or_init(|| servers))
+}
+
+pub fn execute(command: &str) -> Result<()> {
+    for server in get_servers()? {
+        let output = Command::new("tmux")
             .arg("send-keys")
             .arg("-t")
             .arg(server)
             .arg(command)
             .arg("Enter")
-            .output()
-        {
-            Ok(output) => {
-                if !output.status.success() {
-                    errors.push(CommandExecutionError::Failure {
-                        code: match output.status.code() {
-                            Some(code) => code.to_string(),
-                            None => "none".to_string(),
-                        },
-                        command: command.to_string(),
-                        stderr: output.stderr,
-                    });
-                }
-            }
-            Err(err) => errors.push(CommandExecutionError::NotExecuted(err)),
-        }
-    }
+            .output()?;
 
-    if errors.len() > 0 {
-        return Err(Error::CommandExecution(errors));
+        if !output.status.success() {
+            return Err(Error::CommandFailure {
+                command_info: format!("sending keys to tmux session {}", server),
+                code: output.status.code(),
+                stderr: output.stderr,
+            });
+        }
     }
 
     Ok(())

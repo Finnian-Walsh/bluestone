@@ -1,6 +1,8 @@
+mod error;
 mod server;
 mod who;
 
+use error::Result;
 use serenity::{
     async_trait,
     model::{channel::Message, gateway::Ready},
@@ -41,12 +43,19 @@ impl Handler {
         self.bot_mention.get().unwrap()
     }
 
-    async fn handle_command(&self, mut command: SplitWhitespace<'_>, ctx: Context, msg: &Message) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_command(
+        &self,
+        mut command: SplitWhitespace<'_>,
+        ctx: Context,
+        msg: &Message,
+    ) -> Result<()> {
         let channel_id = msg.channel_id;
         let http = &ctx.http;
 
         let Some(command_word) = command.next() else {
-            channel_id.say(http, "# yo <a:ferris_moving:1408770783559553064>").await?;
+            channel_id
+                .say(http, "# yo <a:ferris_moving:1408770783559553064>")
+                .await?;
             return Ok(());
         };
 
@@ -58,16 +67,22 @@ impl Handler {
                 who::who(command, ctx, msg).await?;
             }
             "add" => {
-                server::whitelist_add(&msg.author, match command.next() {
-                    Some(target) => &target,
-                    None => "",
-                })?;
+                server::whitelist_add(
+                    &msg.author,
+                    match command.next() {
+                        Some(target) => &target,
+                        None => "",
+                    },
+                )?;
             }
             "remove" => {
-                server::whitelist_remove(&msg.author, match command.next() {
-                    Some(target) => &target,
-                    None => ""
-                })?;
+                server::whitelist_remove(
+                    &msg.author,
+                    match command.next() {
+                        Some(target) => &target,
+                        None => "",
+                    },
+                )?;
             }
             "please" => {
                 server::execute_request(&msg.author, ExecutionAlias::Please, command)?;
