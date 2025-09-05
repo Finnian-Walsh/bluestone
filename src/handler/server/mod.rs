@@ -76,7 +76,7 @@ pub fn execute(command: &str) -> Result<()> {
         let args: Vec<String> = env::args().skip(1).collect();
 
         if args.len() == 0 {
-            match config::get_default() {
+            match config::get()?.default_server {
                 Ok(server) => vec![server],
                 Err(err) => {
                     match err.kind() {
