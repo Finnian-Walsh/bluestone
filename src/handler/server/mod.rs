@@ -5,7 +5,7 @@ use super::error::{Error, Result};
 use authoritative_users::{AUTHORITATIVE_USERS, ExecutionAlias};
 use mcserver::config;
 use serenity::model::prelude::*;
-use std::{env, io, process::Command, str::SplitWhitespace, sync::OnceLock};
+use std::{env, process::Command, str::SplitWhitespace, sync::OnceLock};
 
 static SERVERS: OnceLock<Vec<String>> = OnceLock::new();
 
@@ -19,10 +19,7 @@ pub fn get_servers() -> Result<&'static Vec<String>> {
     let servers = if args.len() == 0 {
         let default_server = &config::get()?.default_server;
         if default_server.is_empty() {
-            return Err(Error::Io(io::Error::new(
-                io::ErrorKind::NotFound,
-                "no servers found",
-            )));
+            return Err(Error::NoServers);
         }
 
         vec![default_server.to_string()]
@@ -62,10 +59,10 @@ pub fn whitelist_add(_sender: &User, target_player: &str) -> Result<()> {
 pub fn whitelist_remove(sender: &User, target_player: &str) -> Result<()> {
     let authority = AUTHORITATIVE_USERS
         .get(&sender.id)
-        .ok_or(Error::InadequateAuthority)?;
+        .ok_or(Error::InsufficientPermissions)?;
 
     if authority < &ExecutionAlias::Please {
-        return Err(Error::InadequateAuthority);
+        return Err(Error::InsufficientPermissions);
     }
 
     execute(&format!("whitelist remove {}", target_player))?;
@@ -79,10 +76,10 @@ pub fn execute_request(
 ) -> Result<()> {
     let authority = AUTHORITATIVE_USERS
         .get(&sender.id)
-        .ok_or(Error::InadequateAuthority)?;
+        .ok_or(Error::InsufficientPermissions)?;
 
     if *authority < alias {
-        return Err(Error::InadequateAuthority);
+        return Err(Error::InsufficientPermissions);
     }
 
     let command_str = if let Some(view) = command.next() {

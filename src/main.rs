@@ -1,12 +1,14 @@
 mod handler;
 
+use color_eyre::eyre::{Result, WrapErr};
 use dotenvy::dotenv;
 use handler::Handler;
 use serenity::prelude::*;
 use std::env;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
+    color_eyre::install()?;
     dotenv().ok();
 
     let token = env::var("BLUESTONE_TOKEN").expect("Expected BLUESTONE_TOKEN in environment");
@@ -17,7 +19,7 @@ async fn main() {
         .await
         .expect("Err creating client");
 
-    if let Err(why) = client.start().await {
-        println!("Client error: {}", why);
-    }
+    client.start().await.wrap_err("Failed to start client")?;
+
+    Ok(())
 }

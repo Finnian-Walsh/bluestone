@@ -2,7 +2,7 @@ mod error;
 mod server;
 mod who;
 
-use error::Result;
+use color_eyre::eyre::{Result, WrapErr};
 use serenity::{
     async_trait,
     model::{channel::Message, gateway::Ready},
@@ -55,16 +55,22 @@ impl Handler {
         let Some(command_word) = command.next() else {
             channel_id
                 .say(http, "# yo <a:ferris_moving:1408770783559553064>")
-                .await?;
+                .await
+                .wrap_err("Failed to say yo")?;
             return Ok(());
         };
 
         match command_word {
             "hello" => {
-                channel_id.say(http, "👋 hello!").await?;
+                channel_id
+                    .say(http, "👋 hello!")
+                    .await
+                    .wrap_err("Failed to respond to hello")?;
             }
             "who" => {
-                who::who(command, ctx, msg).await?;
+                who::who(command, ctx, msg)
+                    .await
+                    .wrap_err("Failed to handle who")?;
             }
             "add" => {
                 server::whitelist_add(
@@ -85,14 +91,19 @@ impl Handler {
                 )?;
             }
             "please" => {
-                server::execute_request(&msg.author, ExecutionAlias::Please, command)?;
+                server::execute_request(&msg.author, ExecutionAlias::Please, command)
+                    .wrap_err("Failed to execute 'please' request")?;
             }
             "execute" => {
                 println!("execute");
-                server::execute_request(&msg.author, ExecutionAlias::Execute, command)?;
+                server::execute_request(&msg.author, ExecutionAlias::Execute, command)
+                    .wrap_err("Failed to execute 'execute' request")?;
             }
             _ => {
-                channel_id.say(http, "idk").await?;
+                channel_id
+                    .say(http, "idk")
+                    .await
+                    .wrap_err("Failed to say message")?;
             }
         };
 
@@ -125,8 +136,7 @@ impl EventHandler for Handler {
             if id_mentioned {
                 return true;
             }
-            let name_mentioned = first_word.to_lowercase() == self.get_bot_lower_username();
-            name_mentioned
+            first_word.to_lowercase() == self.get_bot_lower_username()
         });
 
         if !has_mention {
