@@ -1,0 +1,132 @@
+use anyhow::{Context, Result};
+use mcserver::config;
+use serenity::{model::channel::Message, prelude::*};
+use std::{collections::HashMap, env, str::SplitWhitespace, sync::OnceLock};
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, PartialOrd)]
+pub enum PermissionLevel {
+    Please,
+    Execute,
+}
+
+static AUTHORITATIVE_USERS: OnceLock<HashMap<UserId, PermissionLevel>> = OnceLock::new();
+
+pub fn get_authoritative_users() -> &'static HashMap<UserId, PermissionLevel> {
+    AUTHORITATIVE_USERS.get_or_init(|| {
+        HashMap::from([
+            (UserId::new(751484442454917231), PermissionLevel::Execute), // silver
+            (UserId::new(836287026327191582), PermissionLevel::Execute), // redstone
+        ])
+    })
+}
+
+fn whitelist_add(_sender: &User, target_player: &str) -> Result<()> {
+    execute(&format!("whitelist add {}", target_player))
+}
+
+fn whitelist_remove(sender: &User, target_player: &str) -> Result<()> {
+    let authority = get_authoritative_users()
+        .get(&sender.id)
+        .ok_or(Error::InsufficientPermissions)?;
+
+    if authority < &PermissionLevel::Please {
+        return Err(Error::InsufficientPermissions);
+    }
+
+    execute(&format!("whitelist remove {}", target_player))?;
+    Ok(())
+}
+
+pub fn execute_request(
+    sender: &User,
+    alias: PermissionLevel,
+    mut command: SplitWhitespace,
+) -> Result<()> {
+    let authority = get_authoritative_users()
+        .get(&sender.id)
+        .ok_or(Error::InsufficientPermissions)?;
+
+    if *authority < alias {
+        return Err(Error::InsufficientPermissions);
+    }
+
+    let command_str = if let Some(view) = command.next() {
+        command.fold(view.to_string(), |mut accumulator, word| {
+            accumulator.push(' ');
+            accumulator.push_str(word);
+            accumulator
+        })
+    } else {
+        String::new()
+    };
+
+    execute(&command_str)?;
+    Ok(())
+}
+
+pub fn execute(command: &str) -> Result<()> {
+    for server in get_servers()? {
+        let output = Command::new("tmux")
+            .arg("send-keys")
+            .arg("-t")
+            .arg(server)
+            .arg(command)
+            .arg("Enter")
+            .output()?;
+
+        if !output.status.success() {
+            return Err(Error::CommandFailure {
+                command_info: format!("sending keys to tmux session {}", server),
+                code: output.status.code(),
+                stderr: output.stderr,
+            });
+        }
+    }
+
+    Ok(())
+}
+static SERVERS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn run(mut command: SplitWhitespace<'_>, _ctx: &Context, msg: &Message) -> Result<()> {
+    match command
+        .next()
+        .ok_or(Error::ExpectedArgument("add or remove"))?
+    {
+        "add" => add(
+            &msg.author,
+            command
+                .next()
+                .ok_or(Error::ExpectedArgument("Expected user"))?,
+        ),
+        "remove" => remove(
+            &msg.author,
+            command
+                .next()
+                .ok_or(Error::ExpectedArgument("Expected user"))?,
+        ),
+        "please" => execute_request(&msg.author, PermissionLevel::Please, command),
+        _ => Ok(()),
+    }
+}
+
+pub fn get_servers() -> Result<&'static Vec<String>> {
+    if let Some(servers) = SERVERS.get() {
+        return Ok(servers);
+    }
+
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    let servers = if args.len() == 0 {
+        let default_server = &config::get()?.default_server;
+        if default_server.is_empty() {
+            return Err(Error::NoServers);
+        }
+
+        vec![default_server.to_string()]
+    } else {
+        args
+    };
+
+    Ok(SERVERS.get_or_init(|| servers))
+}

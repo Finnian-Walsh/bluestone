@@ -5,9 +5,9 @@ fn get_user_info(user: &str) -> String {
     format!("[user info for {user}]")
 }
 
-pub async fn who(
+pub async fn run(
     mut command: SplitWhitespace<'_>,
-    ctx: Context,
+    ctx: &Context,
     msg: &Message,
 ) -> serenity::Result<()> {
     let channel_id = msg.channel_id;

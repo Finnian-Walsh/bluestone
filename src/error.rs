@@ -1,6 +1,4 @@
-use mcserver;
-use serenity;
-use std::{io, result};
+use std::{fmt, io, result};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -16,6 +14,9 @@ pub enum Error {
         stderr: Vec<u8>,
     },
 
+    #[error(transparent)]
+    Fmt(#[from] fmt::Error),
+
     #[error("Insufficient permissions")]
     InsufficientPermissions,
 
@@ -30,6 +31,9 @@ pub enum Error {
 
     #[error(transparent)]
     Serenity(#[from] serenity::Error),
+
+    #[error("Expected argument `{0}`")]
+    ExpectedArgument(&'static str),
 }
 
 pub type Result<T> = result::Result<T, Error>;
